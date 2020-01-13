@@ -26,7 +26,7 @@ func main() {
 
 	glob := os.Getenv("TPL_GLOB")
 	if glob == "" {
-		panic("TPL_GLOB must be set")
+		panic("TPL_GLOB must not be empty")
 	}
 
 	absGlob, err := filepath.Abs(glob)

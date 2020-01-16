@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,86 +14,126 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// TODO currently a global func map must be declared.
+type vartype int
+
+// Template variables types.
+const (
+	TypeString vartype = iota
+	TypeJSON
+)
+
+func (tp vartype) String() string {
+	switch tp {
+	case TypeString:
+		return "String"
+	case TypeJSON:
+		return "JSON"
+	}
+	panic("invalid type")
+}
+
+// TODO currently a global func map must be declared for all templates.
 var funcMap = template.FuncMap{
 	"Title": strings.Title,
 }
 
 func main() {
 	rootCmd := &cobra.Command{
-		Short: "Template glob lister and renderer.",
+		Short: "Template lister and renderer.",
 	}
 
 	glob := os.Getenv("TPL_GLOB")
 	if glob == "" {
-		panic("TPL_GLOB must not be empty")
+		log.Fatal("TPL_GLOB must not be empty")
 	}
 
 	absGlob, err := filepath.Abs(glob)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	for _, t := range mustGlobTemplate(absGlob).Templates() {
-		cmd := createTemplateCommand(t)
+		tvars := parseTemplateVars(t)
+		if len(tvars) == 0 {
+			continue
+		}
+
+		cmd := &cobra.Command{
+			Use: t.Name(),
+			Run: renderer(t),
+		}
+
+		// Declare template variables as command flags.
+		for varName, tp := range tvars {
+			cmd.Flags().String(varName, "", tp.String())
+			cmd.MarkFlagRequired(varName)
+		}
+
 		rootCmd.AddCommand(cmd)
 	}
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 }
 
 func mustGlobTemplate(glob string) *template.Template {
 	tpls, err := template.New("").Funcs(funcMap).ParseGlob(glob)
 	if err != nil {
-		panic(fmt.Errorf("Error parsing templates from glob: %s", glob))
+		log.Fatalf("Error parsing templates from glob: %s", glob)
 	}
 	return tpls
 }
 
-func createTemplateCommand(t *template.Template) *cobra.Command {
-	cmd := &cobra.Command{Use: t.Name()}
-	// Declare template variables as command flags.
-	for tvar := range getTemplateVars(t) {
-		cmd.Flags().String(tvar, "", tvar)
-		cmd.MarkFlagRequired(tvar)
-	}
-
-	// Render the template based on data provided in flags.
-	cmd.Run = func(c *cobra.Command, args []string) {
-		data := make(map[string]string)
-		c.Flags().VisitAll(func(f *pflag.Flag) {
-			data[f.Name] = f.Value.String()
-		})
-		if err := t.Execute(os.Stdout, data); err != nil {
-			panic(err)
-		}
-	}
-
-	return cmd
-}
-
-func getTemplateVars(t *template.Template) map[string]struct{} {
-	varMap := make(map[string]struct{})
-	for _, node := range t.Tree.Root.Nodes {
-		if n, ok := node.(*parse.ActionNode); ok {
-			for _, c := range n.Pipe.Cmds {
-				for _, a := range c.Args {
-					if f, ok := a.(*parse.FieldNode); ok {
-						for _, ident := range f.Ident {
-							if _, exists := varMap[ident]; !exists {
-								varMap[ident] = struct{}{}
-							}
-						}
+func parseCommandNodes(result map[string]vartype, tp vartype, cmds ...*parse.CommandNode) {
+	for _, c := range cmds {
+		for _, a := range c.Args {
+			if f, ok := a.(*parse.FieldNode); ok {
+				for _, ident := range f.Ident {
+					if _, exists := result[ident]; !exists {
+						result[ident] = tp
 					}
 				}
 			}
 		}
 	}
+}
+
+func parseTemplateVars(t *template.Template) map[string]vartype {
+	varMap := map[string]vartype{}
+
+	for _, node := range t.Tree.Root.Nodes {
+		switch n := node.(type) {
+		case *parse.ActionNode:
+			parseCommandNodes(varMap, TypeString, n.Pipe.Cmds...)
+		case *parse.RangeNode:
+			parseCommandNodes(varMap, TypeJSON, n.Pipe.Cmds...)
+		}
+	}
 
 	return varMap
+}
+
+func renderer(t *template.Template) func(c *cobra.Command, args []string) {
+	return func(c *cobra.Command, args []string) {
+		data := make(map[string]interface{})
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			switch f.Usage {
+			case "String":
+				data[f.Name] = f.Value.String()
+			case "JSON":
+				m := make(map[string]interface{})
+				if err := json.Unmarshal([]byte(f.Value.String()), &m); err != nil {
+					log.Fatalf("Invalid JSON: %s", err)
+				}
+				data[f.Name] = m
+			}
+
+		})
+		if err := t.Execute(os.Stdout, data); err != nil {
+			log.Fatalf("Error executing template: %s", err)
+		}
+	}
 }
 
 // TODO streaming templates

@@ -47,7 +47,7 @@ To render, set the variables:
 $ TPL_GLOB=*.tpl go run main.go Template1 --MyVar1 test
 test
 ```
-If a template contains pipeline variables, a JSON payload can be passed:
+If a template contains array/slice/map variables, a JSON payload can be passed:
 ```
 $ TPL_GLOB=*.tpl go run main.go MapTemplate
 Error: required flag(s) "Header", "Lists" not set

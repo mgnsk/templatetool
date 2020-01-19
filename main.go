@@ -15,6 +15,7 @@ import (
 )
 
 type vartype int
+type cobracmd func(c *cobra.Command, args []string)
 
 // Template variables types.
 const (
@@ -32,9 +33,30 @@ func (tp vartype) String() string {
 	panic("invalid type")
 }
 
-// TODO currently a global func map must be declared for all templates.
-var funcMap = template.FuncMap{
-	"Title": strings.Title,
+var (
+	glob   string
+	stream bool
+	// TODO currently a global func map must be declared for all templates.
+	funcMap = template.FuncMap{
+		"Title": strings.Title,
+	}
+)
+
+func init() {
+	glob = os.Getenv("TPL_GLOB")
+	if glob == "" {
+		log.Fatal("TPL_GLOB must not be empty")
+	}
+
+	if os.Getenv("STREAM") == "1" {
+		stream = true
+	}
+
+	var err error
+	glob, err = filepath.Abs(glob)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main() {
@@ -42,17 +64,7 @@ func main() {
 		Short: "Template lister and renderer.",
 	}
 
-	glob := os.Getenv("TPL_GLOB")
-	if glob == "" {
-		log.Fatal("TPL_GLOB must not be empty")
-	}
-
-	absGlob, err := filepath.Abs(glob)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, t := range mustGlobTemplate(absGlob).Templates() {
+	for _, t := range mustGlobTemplate(glob).Templates() {
 		tvars := parseTemplateVars(t)
 		if len(tvars) == 0 {
 			continue
@@ -60,13 +72,17 @@ func main() {
 
 		cmd := &cobra.Command{
 			Use: t.Name(),
-			Run: renderer(t),
+			Run: rendererCommand(t),
 		}
 
-		// Declare template variables as command flags.
-		for varName, tp := range tvars {
-			cmd.Flags().String(varName, "", tp.String())
-			cmd.MarkFlagRequired(varName)
+		if !stream {
+			// Declare template variables as command flags.
+			// This mode is used to simply render a template once
+			// by passing template variables content as arguments.
+			for varName, tp := range tvars {
+				cmd.Flags().String(varName, "", tp.String())
+				cmd.MarkFlagRequired(varName)
+			}
 		}
 
 		rootCmd.AddCommand(cmd)
@@ -114,30 +130,37 @@ func parseTemplateVars(t *template.Template) map[string]vartype {
 	return varMap
 }
 
-func renderer(t *template.Template) func(c *cobra.Command, args []string) {
-	return func(c *cobra.Command, args []string) {
+func rendererCommand(t *template.Template) cobracmd {
+	cmd := func(c *cobra.Command, args []string) {
 		data := make(map[string]interface{})
-		c.Flags().VisitAll(func(f *pflag.Flag) {
-			switch f.Usage {
-			case "String":
-				data[f.Name] = f.Value.String()
-			case "JSON":
-				m := make(map[string]interface{})
-				if err := json.Unmarshal([]byte(f.Value.String()), &m); err != nil {
-					log.Fatalf("Invalid JSON: %s", err)
+		if stream == false {
+			c.Flags().VisitAll(func(f *pflag.Flag) {
+				switch f.Usage {
+				case "String":
+					data[f.Name] = f.Value.String()
+				case "JSON":
+					m := make(map[string]interface{})
+					if err := json.Unmarshal([]byte(f.Value.String()), &m); err != nil {
+						log.Fatalf("Invalid JSON: %s", err)
+					}
+					data[f.Name] = m
 				}
-				data[f.Name] = m
+			})
+			if err := t.Execute(os.Stdout, data); err != nil {
+				log.Fatalf("Error executing template: %s", err)
 			}
-
-		})
-		if err := t.Execute(os.Stdout, data); err != nil {
-			log.Fatalf("Error executing template: %s", err)
+		} else {
+			// In stream mode we read data from stdin and render to stdout.
+			if err := streamTemplate(os.Stdout, t, os.Stdin); err != nil {
+				log.Fatalf("Error streaming template: %s", err)
+			}
 		}
 	}
+	return cmd
 }
 
 // TODO streaming templates
-func streamTemplate(t *template.Template, output io.Writer, jsonReader io.Reader) error {
+func streamTemplate(w io.Writer, t *template.Template, jsonReader io.Reader) error {
 	dec := json.NewDecoder(jsonReader)
 	tk, err := dec.Token()
 	if err != nil {
@@ -160,7 +183,7 @@ func streamTemplate(t *template.Template, output io.Writer, jsonReader io.Reader
 		if err != nil {
 			return err
 		}
-		if err := t.Execute(output, data); err != nil {
+		if err := t.Execute(w, data); err != nil {
 			return err
 		}
 	}

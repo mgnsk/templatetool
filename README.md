@@ -3,6 +3,7 @@
 `go install github.com/mgnsk/templatetool`
 
 Set `TPL_GLOB` to the glob of templates.
+`STREAM=1` can be used to render a template with data from a json stream.
 
 ### Examples
 
@@ -47,51 +48,5 @@ To render, set the variables:
 $ TPL_GLOB=*.tpl go run main.go Template1 --MyVar1 test
 test
 ```
-If a template contains array/slice/map variables, a JSON payload can be passed:
-```
-$ TPL_GLOB=*.tpl go run main.go MapTemplate
-Error: required flag(s) "Header", "Lists" not set
-Usage:
-   MapTemplate [flags]
 
-Flags:
-      --Header string   String
-      --Lists string    JSON
-  -h, --help            help for MapTemplate
-
-required flag(s) "Header", "Lists" not set
-exit status 1
-```
-
-Rendering:
-```
-$ TPL_GLOB=*.tpl go run main.go MapTemplate --Header "<h2>Sections</h2>" --Lists "$(cat <<JSON
-{
-    "First section": [
-        "First item",
-        "Second item"
-    ],
-    "Second section": [
-        "item1",
-        "item2"
-    ]
-}
-JSON
-)"
-<h2>Sections</h2>
-
-<section>
-    First section:
-    <p>First item</p>
-    <p>Second item</p>
-</section>
-
-<section>
-    Second section:
-    <p>item1</p>
-    <p>item2</p>
-</section>
-```
-
-
-TODO: streaming JSON from stdin for rendering a single template with multiple data.
+See `example_once.sh` and `example_stream.sh` to see how to deal with  array/slice/map variables or JSON streaming from standard input.

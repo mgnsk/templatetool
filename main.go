@@ -100,7 +100,7 @@ func parseCommandNodes(result map[string]vartype, tp vartype, cmds ...*parse.Com
 }
 
 func parseTemplateVars(t *template.Template) map[string]vartype {
-	varMap := map[string]vartype{}
+	varMap := make(map[string]vartype)
 
 	for _, node := range t.Tree.Root.Nodes {
 		switch n := node.(type) {

@@ -1,6 +1,6 @@
 ### Usage
 
-`go install github.com/mgnsk/templatetool`
+`go get github.com/mgnsk/templatetool`
 
 Set `TPL_GLOB` to the glob of templates.
 `STREAM=1` can be used to render a template with data from a json stream.
